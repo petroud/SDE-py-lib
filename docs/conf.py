@@ -34,7 +34,7 @@ except ImportError:
     from sphinx import apidoc
 
 output_dir = os.path.join(__location__, "api")
-module_dir = os.path.join(__location__, "../src/sde_py_lib")
+module_dir = os.path.join(__location__, "../src")
 try:
     shutil.rmtree(output_dir)
 except FileNotFoundError:
@@ -88,7 +88,7 @@ source_suffix = ".rst"
 master_doc = "index"
 
 # General information about the project.
-project = "sdepy"
+project = "sde-py-lib"
 copyright = "2025, Dimitris Petrou"
 
 # The version info for the project you're documenting, acts as replacement for

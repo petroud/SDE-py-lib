@@ -23,6 +23,8 @@ __pycache__/*
 .vscode
 tags
 
+/sde-env
+
 # Package files
 *.egg
 *.eggs/
