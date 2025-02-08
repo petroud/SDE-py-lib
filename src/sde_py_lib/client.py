@@ -6,10 +6,11 @@ import time
 import threading
 import queue
 
+
 class Client:
-    """ An SDK (client) for the Synopses Data Engine.
+    """An SDK (client) for the Synopses Data Engine.
     Args:
-      brokers (str) : The URLs on which the Kafka Brokers containing topics used by an SDE job. 
+      brokers (str) : The URLs on which the Kafka Brokers containing topics used by an SDE job.
                       For more than one brokers split them by commas like <address_1>:<port_1>, <address_2>:<port_2>
 
       request_topic (str) :  The name of the request topic from which the SDE fetches requests. Defaults to 'request'.
@@ -19,19 +20,20 @@ class Client:
 
       message_queue_size (str) : Optionally set the size of the queue in which the Client maintains answers in case they were
                                  not fetched in time. Defaults to 20.
- 
-      response_timeout (str) :  Optionally the maximum timeout upon which the Client awaits for a response after a request has been set. 
-                                Defaults to 10s.    
+
+      response_timeout (str) :  Optionally the maximum timeout upon which the Client awaits for a response after a request has been set.
+                                Defaults to 10s.
     """
+
     def __init__(
-            self, 
-            brokers: str, 
-            request_topic: str = 'request',
-            data_topic: str = 'data',
-            estimation_topic: str = 'estimation',
-            logging_topic: str = 'logging',
-            message_queue_size: int = 20,
-            response_timeout: int = 10,
+        self,
+        brokers: str,
+        request_topic: str = "request",
+        data_topic: str = "data",
+        estimation_topic: str = "estimation",
+        logging_topic: str = "logging",
+        message_queue_size: int = 20,
+        response_timeout: int = 10,
     ):
 
         # Initiliaze the variables of the Client propagated later to various sub-components
@@ -51,7 +53,7 @@ class Client:
             [self._estimation_topic, self._logging_topic]
         )
 
-         # A dict mapping correlation ids to per-request queues.
+        # A dict mapping correlation ids to per-request queues.
         self._pending_requests = {}
 
         # A general response queue for messages not matching a pending request.
@@ -64,29 +66,25 @@ class Client:
         self._consumer_thread = threading.Thread(target=self._consume_loop, daemon=True)
         self._consumer_thread.start()
 
-    
-
     def _create_producer(self) -> KafkaProducer:
         """Creates and returns a KafkaProducer with JSON serialization."""
         producer = KafkaProducer(
             bootstrap_servers=self._brokers,
-            value_serializer=lambda v: json.dumps(v).encode('utf-8')
+            value_serializer=lambda v: json.dumps(v).encode("utf-8"),
         )
         return producer
-
 
     def _create_consumer(self, topics) -> KafkaConsumer:
         """Creates and returns a KafkaConsumer subscribed to the given topics with JSON deserialization."""
         consumer = KafkaConsumer(
             *topics,
             bootstrap_servers=self._brokers,
-            auto_offset_reset='latest',
+            auto_offset_reset="latest",
             enable_auto_commit=True,
             group_id="sde_client_group",
-            value_deserializer=lambda m: json.loads(m.decode('utf-8'))
+            value_deserializer=lambda m: json.loads(m.decode("utf-8")),
         )
         return consumer
-
 
     def _consume_loop(self):
         """Background thread loop: polls Kafka and dispatches incoming messages."""
@@ -107,16 +105,19 @@ class Client:
                     if external_uid and external_uid in self._pending_requests:
                         try:
                             # Dispatch to the waiting request's queue.
-                            self._pending_requests[external_uid].put(msg_value, timeout=1)
+                            self._pending_requests[external_uid].put(
+                                msg_value, timeout=1
+                            )
                         except queue.Full:
-                            print(f"Pending queue for correlation id {external_uid} is full. Dropping message.")
+                            print(
+                                f"Pending queue for correlation id {external_uid} is full. Dropping message."
+                            )
                     else:
                         try:
                             # Put into the general response queue.
                             self._response_queue.put(msg_value, timeout=1)
                         except queue.Full:
-                            print("General response queue is full. Dropping message.")    
-
+                            print("General response queue is full. Dropping message.")
 
     def send_request(self, request_data: dict) -> dict:
         """
@@ -151,26 +152,42 @@ class Client:
             response = pending_queue.get(timeout=self._response_timeout)
             return response
         except queue.Empty:
-            raise TimeoutError(f"No response received for external_uid {external_uid} within {self._response_timeout} seconds")
+            raise TimeoutError(
+                f"No response received for external_uid {external_uid} within {self._response_timeout} seconds"
+            )
         finally:
             # Clean up the pending request regardless of outcome.
             if external_uid in self._pending_requests:
                 del self._pending_requests[external_uid]
-    
+
+    def send_datapoint(self, datapoint_data: dict):
+        """
+        Sends a datapoint to the data topic.
+
+        Args:
+            datapoint_data: A dictionary representing the datapoint to be ingested.
+        """
+        try:
+            self._producer.send(self._data_topic, datapoint_data)
+            self._producer.flush()
+            print(f"Sent datapoint: {datapoint_data}")
+        except KafkaError as e:
+            raise RuntimeError(f"Failed to send datapoint: {e}")
+
     def close(self):
-            """
-            Gracefully shuts down the client:
-            - Stops the consumer thread.
-            - Closes the Kafka consumer and producer.
-            """
-            self._stop_event.set()
-            self._consumer_thread.join(timeout=5)
-            try:
-                self._consumer.close()
-            except Exception as e:
-                print(f"Error closing Kafka consumer: {e}")
-            try:
-                self._producer.close()
-            except Exception as e:
-                print(f"Error closing Kafka producer: {e}")
-            print("Client shutdown completed.")
+        """
+        Gracefully shuts down the client:
+        - Stops the consumer thread.
+        - Closes the Kafka consumer and producer.
+        """
+        self._stop_event.set()
+        self._consumer_thread.join(timeout=5)
+        try:
+            self._consumer.close()
+        except Exception as e:
+            print(f"Error closing Kafka consumer: {e}")
+        try:
+            self._producer.close()
+        except Exception as e:
+            print(f"Error closing Kafka producer: {e}")
+        print("Client shutdown completed.")
