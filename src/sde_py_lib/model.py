@@ -4,17 +4,17 @@ from .client import Client  # Assumes you have a Kafka-based Client implementati
 
 class SynopsisSpec(Enum):
     CountMin = {
-        "id": "1",
+        "id": 1,
         "name": "CountMin",
         "parameters": ["KeyField", "ValueField", "OperationMode", "epsilon", "confidence", "seed"]
     }
     BloomFilter = {
-        "id": "2",
+        "id": 2,
         "name": "BloomFilter",
         "parameters": ["KeyField", "ValueField", "OperationMode", "numberOfElements", "FalsePositive"]
     }
     AMSSynopsis = {
-        "id": "3",
+        "id": 3,
         "name": "AMS",
         "parameters": ["KeyField", "ValueField", "OperationMode", "Depth", "Buckets"]
     }
@@ -31,15 +31,15 @@ class PartitioningMode(Enum):
 
 
 class Synopsis:
-    def __init__(self, spec: SynopsisSpec.name, client: Client):
+    def __init__(self, spec: SynopsisSpec, client: Client):
         """
         Initialize the Synopsis instance with a specific specification and Kafka client.
 
         Args:
             spec (SynopsisSpec): The specification for the synopsis (e.g., CountMin, BloomFilter, AMS).
-            client (Client): An instance of your Kafka-based client.
+            client (Client): An instance of the client.
         """
-        self._spec = spec.value
+        self._spec = spec
         self._client = client
 
     def _validate_parameters(self, param: dict):
@@ -64,30 +64,36 @@ class Synopsis:
                 message += f" Unexpected keys: {extra}."
             raise ValueError(message)
 
-    def add(self, streamID: str, datasetKey: str, param: dict, noOfP: int, uid: int) -> dict:
+    def add(self, streamID: str, key: str, param: dict, parallelism: int, uid: int) -> dict:
         """
         Add (instantiate) a new synopsis instance.
 
         Uses requestID 1 for "ADD" (with keyed partitioning as per your table).
 
         Args:
-            streamID (str): The stream identifier.
-            datasetKey (str): The key used for grouping.
-            param (dict): Instantiation parameters (e.g., {"KeyField": "StockID", "ValueField": "price", ...}).
-            noOfP (int): Number of partitions (or parallelism).
-            uid (int): User or job identifier.
+            streamID (str): The stream identifier used to identify which tuple reach which Synopsis
+            key (str): The key identifier in case of batch processing (datasetKey)
+            param (dict): Instantiation parameters as list dict with keys (e.g., {"KeyField": "StockID", "ValueField": "price", ...}).
+            parallelism (int): Degree of parallelism.
+            uid (int): The UID of the Synopsis in the SDE
 
         Returns:
             dict: The response returned by the client.
         """
         self._validate_parameters(param)
+
+        self._parallelism = parallelism
+        self._streamID = streamID
+        self._key = key
+
         request_payload = {
+            "key": key,
             "streamID": streamID,
             "synopsisID": self._spec.value["id"],
             "requestID": 1,  # ADD operation
-            "dataSetkey": datasetKey,
+            "dataSetkey": key,
             "param": param,
-            "noOfP": noOfP,
+            "noOfP": parallelism,
             "uid": uid
         }
         return self._client.send_request(request_payload)
@@ -132,11 +138,13 @@ class Synopsis:
         request_payload = {
             "streamID": streamID,
             "synopsisID": self._spec.value["id"],
-            "requestID": 8,  # Snapshot operation
+            "requestID": 100,
             "dataSetkey": datasetKey,
-            "uid": uid
+            "uid": uid,
+            "noOfP": 1,
+            "param": [],
         }
-        return self._client.send_request(request_payload)
+        return self._client.send_request(request_payload, datasetKey)
 
     def loadLatestSnapshot(self, streamID: str, datasetKey: str, uid: int) -> dict:
         """
@@ -155,7 +163,7 @@ class Synopsis:
         request_payload = {
             "streamID": streamID,
             "synopsisID": self._spec.value["id"],
-            "requestID": 9,  # Load latest snapshot operation
+            "requestID": 200,  # Load latest snapshot operation
             "dataSetkey": datasetKey,
             "uid": uid
         }

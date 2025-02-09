@@ -23,6 +23,7 @@ class Client:
 
       response_timeout (str) :  Optionally the maximum timeout upon which the Client awaits for a response after a request has been set.
                                 Defaults to 10s.
+      parallelism (str) : The degree of parallelism under which the SDE runs. Defaults to 2.
     """
 
     def __init__(
@@ -34,6 +35,7 @@ class Client:
         logging_topic: str = "logging",
         message_queue_size: int = 20,
         response_timeout: int = 10,
+        parallelism: int = 2,
     ):
 
         # Initiliaze the variables of the Client propagated later to various sub-components
@@ -44,6 +46,7 @@ class Client:
         self._logging_topic = logging_topic
         self._message_queue_size = message_queue_size
         self._response_timeout = response_timeout
+        self._parallelism = parallelism
 
         # Create a Kafka producer.
         self._producer = self._create_producer()
@@ -61,7 +64,7 @@ class Client:
 
         # Event to signal the consumer thread to stop.
         self._stop_event = threading.Event()
-
+        
         # Start the background consumer thread.
         self._consumer_thread = threading.Thread(target=self._consume_loop, daemon=True)
         self._consumer_thread.start()
@@ -92,15 +95,14 @@ class Client:
             try:
                 msg_pack = self._consumer.poll(timeout_ms=500)
             except KafkaError as e:
-                # Log or handle consumer errors appropriately.
                 print(f"Error polling Kafka: {e}")
                 continue
 
             for tp, messages in msg_pack.items():
                 for message in messages:
-                    # Each message value should be a dict (JSON-deserialized)
+                    # Each message value should be a dict formed by the Message class of SDE (JSON-deserialized)
                     msg_value = message.value
-                    external_uid = msg_value.get("external_uid")
+                    external_uid = msg_value.get("relatedRequestIdentifier")
 
                     if external_uid and external_uid in self._pending_requests:
                         try:
@@ -110,7 +112,7 @@ class Client:
                             )
                         except queue.Full:
                             print(
-                                f"Pending queue for correlation id {external_uid} is full. Dropping message."
+                                f"Pending queue for relatedRequestIdentifier {external_uid} is full. Dropping message."
                             )
                     else:
                         try:
@@ -119,7 +121,7 @@ class Client:
                         except queue.Full:
                             print("General response queue is full. Dropping message.")
 
-    def send_request(self, request_data: dict) -> dict:
+    def send_request(self, request_data: dict, key: str) -> dict:
         """
         Sends a JSON request to the request topic and awaits a corresponding response.
 
@@ -131,8 +133,9 @@ class Client:
             The response message (as a dict) matching the request.
         """
         # Ensure the request has a unique correlation id.
-        external_uid = request_data.get("external_uid", uuid.uuid4().hex)
-        request_data["external_uid"] = external_uid
+        external_uid = request_data.get("externalUID", uuid.uuid4().hex)
+        request_data["externalUID"] = external_uid
+        request_data["key"] = key
 
         # Create a dedicated queue for this pending request.
         pending_queue = queue.Queue(maxsize=1)
@@ -140,9 +143,8 @@ class Client:
 
         # Send the request to the designated request topic.
         try:
-            self._producer.send(self._request_topic, request_data)
+            self._producer.send(self._request_topic, request_data, key.encode("utf-8"))
             self._producer.flush()
-            print(f"Sent request with external_uid {external_uid}: {request_data}")
         except KafkaError as e:
             del self._pending_requests[external_uid]
             raise RuntimeError(f"Failed to send request: {e}")
@@ -152,9 +154,10 @@ class Client:
             response = pending_queue.get(timeout=self._response_timeout)
             return response
         except queue.Empty:
-            raise TimeoutError(
+            print(
                 f"No response received for external_uid {external_uid} within {self._response_timeout} seconds"
             )
+
         finally:
             # Clean up the pending request regardless of outcome.
             if external_uid in self._pending_requests:
@@ -173,6 +176,26 @@ class Client:
             print(f"Sent datapoint: {datapoint_data}")
         except KafkaError as e:
             raise RuntimeError(f"Failed to send datapoint: {e}")
+
+    def send_storage_auth_request(
+        self, access_key: str, secret_key: str, session_token: str, endpoint: str
+    ):
+        """Sends a request to SDE to alter the StorageManager credentials 
+        used to access the data layer.
+        Args:
+            access_key: The MinIO compatible access key.
+            secret_key: The MinIO compatible secret key.
+            session_token: The MinIO compatbile session token.
+            endpoint: The endpoint in which the MinIO API listens to.
+        """
+        payload = {
+            "streamID": "AUTH",
+            "requestID": 101,
+            "param": ["sts", access_key, secret_key, session_token, endpoint],
+            "noOfP": self._parallelism,
+            "uid": "0",
+        }
+        self.send_request(payload, key="none")
 
     def close(self):
         """
