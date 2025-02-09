@@ -64,7 +64,7 @@ class Client:
 
         # Event to signal the consumer thread to stop.
         self._stop_event = threading.Event()
-        
+
         # Start the background consumer thread.
         self._consumer_thread = threading.Thread(target=self._consume_loop, daemon=True)
         self._consumer_thread.start()
@@ -180,7 +180,7 @@ class Client:
     def send_storage_auth_request(
         self, access_key: str, secret_key: str, session_token: str, endpoint: str
     ):
-        """Sends a request to SDE to alter the StorageManager credentials 
+        """Sends a request to SDE to alter the StorageManager credentials
         used to access the data layer.
         Args:
             access_key: The MinIO compatible access key.
@@ -189,13 +189,25 @@ class Client:
             endpoint: The endpoint in which the MinIO API listens to.
         """
         payload = {
-            "streamID": "AUTH",
             "requestID": 101,
             "param": ["sts", access_key, secret_key, session_token, endpoint],
             "noOfP": self._parallelism,
-            "uid": "0",
         }
-        self.send_request(payload, key="none")
+        self.send_request(payload, key="__CLIENT__")
+
+    def get_synopses(self, key: str = "__any__"):
+        """Sends a request to SDE to request the maintained synopses.
+        Args:
+           key: Optionally provide the datasetkey for which the synopses are requested.
+        """
+        payload = {
+            "key": key ,
+            "dataSetkey": key,
+            "requestID": 1000,
+            "param": [],
+            "noOfP": self._parallelism,
+        }
+        return self.send_request(payload, key=key)
 
     def close(self):
         """
