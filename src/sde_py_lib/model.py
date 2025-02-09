@@ -122,28 +122,56 @@ class Synopsis:
         }
         return self._client.send_request(request_payload, key)
 
-    def delete(self, streamID: str, datasetKey: str, uid: int) -> dict:
+    def delete(self) -> dict:
         """
         Delete an existing synopsis instance.
-
-        Uses requestID 2 for DELETE.
-
-        Args:
-            streamID (str): The stream identifier.
-            datasetKey (str): The key used for grouping.
-            uid (int): User or job identifier.
 
         Returns:
             dict: The response from the deletion request.
         """
+        if not all(
+            hasattr(self, attr)
+            for attr in ["_streamID", "_key", "_uid", "_parallelism"]
+        ):
+            raise ValueError(
+                "Missing required attributes. Ensure 'add' method has been called."
+            )
+
         request_payload = {
-            "streamID": streamID,
+            "streamID": self._streamID,
             "synopsisID": self._spec.value["id"],
-            "requestID": 2,  # DELETE operation
-            "dataSetkey": datasetKey,
-            "uid": uid,
+            "requestID": 2,
+            "dataSetkey": self._key,
+            "uid": self._uid,
+            "noOfP": self._parallelism,         
         }
-        return self._client.send_request(request_payload)
+        return self._client.send_request(request_payload, self._key)
+    
+    def estimate(self, params: list) -> dict:
+        """
+        Estimate an existing synopsis.
+
+        Returns:
+            dict: The response from the estimation request.
+        """
+        if not all(
+            hasattr(self, attr)
+            for attr in ["_streamID", "_key", "_uid", "_parallelism"]
+        ):
+            raise ValueError(
+                "Missing required attributes. Ensure 'add' method has been called."
+            )
+
+        request_payload = {
+            "streamID": self._streamID,
+            "synopsisID": self._spec.value["id"],
+            "requestID": 3,
+            "dataSetkey": self._key,
+            "uid": self._uid,
+            "noOfP": self._parallelism,
+            "param": params if params else [],
+        }
+        return self._client.send_request(request_payload, self._key)
 
     def snapshot(self) -> dict:
         """
