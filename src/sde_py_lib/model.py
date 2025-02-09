@@ -6,23 +6,34 @@ class SynopsisSpec(Enum):
     CountMin = {
         "id": 1,
         "name": "CountMin",
-        "parameters": ["KeyField", "ValueField", "OperationMode", "epsilon", "confidence", "seed"]
+        "parameters": [
+            "KeyField",
+            "ValueField",
+            "epsilon",
+            "confidence",
+            "seed",
+        ],
     }
     BloomFilter = {
         "id": 2,
         "name": "BloomFilter",
-        "parameters": ["KeyField", "ValueField", "OperationMode", "numberOfElements", "FalsePositive"]
+        "parameters": [
+            "KeyField",
+            "ValueField",
+            "numberOfElements",
+            "FalsePositive",
+        ],
     }
     AMSSynopsis = {
         "id": 3,
         "name": "AMS",
-        "parameters": ["KeyField", "ValueField", "OperationMode", "Depth", "Buckets"]
+        "parameters": ["KeyField", "ValueField", "Depth", "Buckets"],
     }
 
 
 class OperationMode(Enum):
-    QUERYABLE = "queryable"
-    CONTINUOUS = "continuous"
+    QUERYABLE = "Queryable"
+    CONTINUOUS = "Continuous"
 
 
 class PartitioningMode(Enum):
@@ -45,10 +56,10 @@ class Synopsis:
     def _validate_parameters(self, param: dict):
         """
         Validate that the provided parameters exactly match the expected keys from the spec.
-        
+
         Args:
             param (dict): The parameters dictionary to validate.
-            
+
         Raises:
             ValueError: If there are missing or unexpected parameter keys.
         """
@@ -64,39 +75,52 @@ class Synopsis:
                 message += f" Unexpected keys: {extra}."
             raise ValueError(message)
 
-    def add(self, streamID: str, key: str, param: dict, parallelism: int, uid: int) -> dict:
+    def add(
+        self,
+        streamID: str,
+        key: str,
+        param: dict,
+        parallelism: int,
+        uid: int,
+        partition_mode: PartitioningMode = PartitioningMode.KEYED,
+        operation_mode: OperationMode = OperationMode.QUERYABLE,
+    ) -> dict:
         """
         Add (instantiate) a new synopsis instance.
-
-        Uses requestID 1 for "ADD" (with keyed partitioning as per your table).
 
         Args:
             streamID (str): The stream identifier used to identify which tuple reach which Synopsis
             key (str): The key identifier in case of batch processing (datasetKey)
             param (dict): Instantiation parameters as list dict with keys (e.g., {"KeyField": "StockID", "ValueField": "price", ...}).
             parallelism (int): Degree of parallelism.
-            uid (int): The UID of the Synopsis in the SDE
-
+            uid (int): The UID of the Synopsis in the SDE.
+            partition_mode: The mode upon which the parallelization scheme is enforced (Random Partitioning VS Keyed Partitioning).
+            operation_mode: The mode upon which estimations are received (Queryable for on-demand, Continuous for emition upon data arrival).
         Returns:
             dict: The response returned by the client.
         """
         self._validate_parameters(param)
-
+        params = list(param.values())
         self._parallelism = parallelism
         self._streamID = streamID
         self._key = key
-
+        self._uid = uid
+        # Decide the operation mode of the Synopsis, Queryable or Continuous
+        # Decide also the partitioning mode (Keyed or Random). Continous mode overrides Random partitioning.
+        req_id = partition_mode.value
+        req_id = 5 if operation_mode == OperationMode.CONTINUOUS else req_id
+        params.insert(2, operation_mode.value)
         request_payload = {
             "key": key,
             "streamID": streamID,
             "synopsisID": self._spec.value["id"],
-            "requestID": 1,  # ADD operation
+            "requestID": 1,  # ADD operati
             "dataSetkey": key,
-            "param": param,
+            "param": params,
             "noOfP": parallelism,
-            "uid": uid
+            "uid": uid,
         }
-        return self._client.send_request(request_payload)
+        return self._client.send_request(request_payload, key)
 
     def delete(self, streamID: str, datasetKey: str, uid: int) -> dict:
         """
@@ -108,7 +132,7 @@ class Synopsis:
             streamID (str): The stream identifier.
             datasetKey (str): The key used for grouping.
             uid (int): User or job identifier.
-        
+
         Returns:
             dict: The response from the deletion request.
         """
@@ -117,34 +141,63 @@ class Synopsis:
             "synopsisID": self._spec.value["id"],
             "requestID": 2,  # DELETE operation
             "dataSetkey": datasetKey,
-            "uid": uid
+            "uid": uid,
         }
         return self._client.send_request(request_payload)
 
-    def snapshot(self, streamID: str, datasetKey: str, uid: int) -> dict:
+    def snapshot(self) -> dict:
         """
         Create a snapshot of the current synopsis state.
+        Synopsis should have been added to the SDE first by calling add()
+        or fetched through it.
 
-        Uses a custom requestID (e.g., 8) for snapshot operation.
-
-        Args:
-            streamID (str): The stream identifier.
-            datasetKey (str): The key used for grouping.
-            uid (int): User or job identifier.
-        
         Returns:
             dict: The response from the snapshot request.
         """
+        if not all(
+            hasattr(self, attr)
+            for attr in ["_streamID", "_key", "_uid", "_parallelism"]
+        ):
+            raise ValueError(
+                "Missing required attributes. Ensure 'add' method has been called."
+            )
+
         request_payload = {
-            "streamID": streamID,
+            "streamID": self._streamID,
             "synopsisID": self._spec.value["id"],
             "requestID": 100,
-            "dataSetkey": datasetKey,
-            "uid": uid,
-            "noOfP": 1,
+            "dataSetkey": self._key,
+            "uid": self._uid,
+            "noOfP": self._parallelism,
             "param": [],
         }
-        return self._client.send_request(request_payload, datasetKey)
+        return self._client.send_request(request_payload, self._key)
+
+    def list_snapshots(self) -> dict:
+        """
+        Lists the snapshots of a Synopsis that have been captured in the past as files from MinIO.
+
+        Returns:
+            dict: The response from the list snapshot request.
+        """
+        if not all(
+            hasattr(self, attr)
+            for attr in ["_streamID", "_key", "_uid", "_parallelism"]
+        ):
+            raise ValueError(
+                "Missing required attributes. Ensure 'add' method has been called."
+            )
+
+        request_payload = {
+            "streamID": self._streamID,
+            "synopsisID": self._spec.value["id"],
+            "requestID": 301,
+            "dataSetkey": self._key,
+            "uid": self._uid,
+            "noOfP": self._parallelism,
+            "param": [],
+        }
+        return self._client.send_request(request_payload, self._key)
 
     def loadLatestSnapshot(self, streamID: str, datasetKey: str, uid: int) -> dict:
         """
@@ -156,7 +209,7 @@ class Synopsis:
             streamID (str): The stream identifier.
             datasetKey (str): The key used for grouping.
             uid (int): User or job identifier.
-        
+
         Returns:
             dict: The response containing the latest snapshot.
         """
@@ -165,11 +218,13 @@ class Synopsis:
             "synopsisID": self._spec.value["id"],
             "requestID": 200,  # Load latest snapshot operation
             "dataSetkey": datasetKey,
-            "uid": uid
+            "uid": uid,
         }
         return self._client.send_request(request_payload)
 
-    def loadCustomSnapshot(self, streamID: str, datasetKey: str, snapshotID: int, uid: int) -> dict:
+    def loadCustomSnapshot(
+        self, streamID: str, datasetKey: str, snapshotID: int, uid: int
+    ) -> dict:
         """
         Load a specific (custom) snapshot for this synopsis.
 
@@ -180,7 +235,7 @@ class Synopsis:
             datasetKey (str): The key used for grouping.
             snapshotID (int): The identifier of the desired snapshot.
             uid (int): User or job identifier.
-        
+
         Returns:
             dict: The response containing the custom snapshot.
         """
@@ -190,12 +245,18 @@ class Synopsis:
             "requestID": 10,  # Load custom snapshot operation
             "dataSetkey": datasetKey,
             "snapshotID": snapshotID,
-            "uid": uid
+            "uid": uid,
         }
         return self._client.send_request(request_payload)
 
     def instatiateNewSynopsisFromSnapshot(
-        self, streamID: str, datasetKey: str, snapshotID: int, param: dict, noOfP: int, uid: int
+        self,
+        streamID: str,
+        datasetKey: str,
+        snapshotID: int,
+        param: dict,
+        noOfP: int,
+        uid: int,
     ) -> dict:
         """
         Instantiate a new synopsis using a stored snapshot.
@@ -209,7 +270,7 @@ class Synopsis:
             param (dict): Instantiation parameters (should match the spec).
             noOfP (int): Number of partitions (or parallelism).
             uid (int): User or job identifier.
-        
+
         Returns:
             dict: The response from the instantiation request.
         """
@@ -222,6 +283,6 @@ class Synopsis:
             "snapshotID": snapshotID,
             "param": param,
             "noOfP": noOfP,
-            "uid": uid
+            "uid": uid,
         }
         return self._client.send_request(request_payload)
