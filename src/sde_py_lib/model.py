@@ -92,55 +92,31 @@ class Synopsis:
             if extra:
                 message += f" Unexpected keys: {extra}."
             raise ValueError(message)
-    
-    @staticmethod  
+
     def new(
         self,
         streamID: str,
         key: str,
-        param: dict,
         parallelism: int,
         uid: int,
-        partition_mode: PartitioningMode = PartitioningMode.KEYED,
-        operation_mode: OperationMode = OperationMode.QUERYABLE,
     ) -> dict:
         """
-        Add (instantiate) a new synopsis instance.
+        Create a new synopsis instance.
 
         Args:
             streamID (str): The stream identifier used to identify which tuple reach which Synopsis
             key (str): The key identifier in case of batch processing (datasetKey)
-            param (dict): Instantiation parameters as list dict with keys (e.g., {"KeyField": "StockID", "ValueField": "price", ...}).
             parallelism (int): Degree of parallelism.
             uid (int): The UID of the Synopsis in the SDE.
-            partition_mode: The mode upon which the parallelization scheme is enforced (Random Partitioning VS Keyed Partitioning).
-            operation_mode: The mode upon which estimations are received (Queryable for on-demand, Continuous for emition upon data arrival).
+
         Returns:
-            dict: The response returned by the client.
+            Initialized synopsis object
         """
-        self._validate_parameters(param)
-        params = list(param.values())
         self._parallelism = parallelism
         self._streamID = streamID
         self._key = key
         self._uid = uid
-        # Decide the operation mode of the Synopsis, Queryable or Continuous
-        # Decide also the partitioning mode (Keyed or Random). Continous mode overrides Random partitioning.
-        req_id = partition_mode.value
-        req_id = 5 if operation_mode == OperationMode.CONTINUOUS else req_id
-        params.insert(2, operation_mode.value)
-        request_payload = {
-            "key": key,
-            "streamID": streamID,
-            "synopsisID": self._spec.value["id"],
-            "requestID": 1,  # ADD operati
-            "dataSetkey": key,
-            "param": params,
-            "noOfP": parallelism,
-            "uid": uid,
-        }
         return self
-
 
     def add(
         self,
@@ -309,9 +285,7 @@ class Synopsis:
 
     @validate_properties
     def new_synopsis_from_snapshot(
-        self,
-        version_number: int = 0,
-        new_uid: int = random.randint(90000, 100000)
+        self, version_number: int = 0, new_uid: int = random.randint(90000, 100000)
     ) -> dict:
         """
         Instantiate a new synopsis using a stored snapshot.
@@ -329,7 +303,7 @@ class Synopsis:
         request_payload = {
             "streamID": self._streamID,
             "synopsisID": self._spec.value["id"],
-            "requestID": 11,  # Instantiate from snapshot operation
+            "requestID": 202,
             "dataSetkey": self._key,
             "param": params if params else [],
             "noOfP": self._parallelism,

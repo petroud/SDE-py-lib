@@ -173,7 +173,6 @@ class Client:
         try:
             self._producer.send(self._data_topic, datapoint_data)
             self._producer.flush()
-            print(f"Sent datapoint: {datapoint_data}")
         except KafkaError as e:
             raise RuntimeError(f"Failed to send datapoint: {e}")
 
